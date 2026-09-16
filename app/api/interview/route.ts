@@ -11,7 +11,7 @@ const MIN_QUESTIONS = 1;
 const MAX_QUESTIONS = 10;
 // 如果前端沒有傳 totalQuestions 欄位,預設使用 3 題(相容舊版前端行為)。
 const DEFAULT_QUESTIONS = 3;
-// 履歷文字的長度上限,搭配 /api/parse-resume 抽出的文字一起使用,避免 prompt 過長。
+// 前端「履歷內容」textarea 的長度上限,避免 prompt 過長。
 const MAX_RESUME_LENGTH = 8000;
 // OpenAI Chat Completions API 的端點網址。
 const OPENAI_URL = "https://api.openai.com/v1/chat/completions";

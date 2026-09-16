@@ -1,17 +1,14 @@
 "use client";
 
-import { useState, useSyncExternalStore, type ChangeEvent } from "react";
+import { useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { ScoreRing } from "../components/score-ring";
 import {
   ArrowLeftIcon,
   CheckCircleIcon,
-  CloseIcon,
-  FileTextIcon,
   KeyIcon,
   LightbulbIcon,
   SpinnerIcon,
-  UploadIcon,
 } from "../components/icons";
 import {
   getApiKeyServerSnapshot,
@@ -39,8 +36,7 @@ const MIN_QUESTIONS = 1;
 const MAX_QUESTIONS = 10;
 const DEFAULT_QUESTIONS = 3;
 const PRESET_QUESTIONS = [3, 5, 7];
-const RESUME_ACCEPT = ".pdf,.txt";
-const MAX_RESUME_FILE_SIZE = 5 * 1024 * 1024;
+const MAX_RESUME_LENGTH = 8000;
 
 export default function InterviewPage() {
   const [jobDescription, setJobDescription] = useState("");
@@ -53,12 +49,10 @@ export default function InterviewPage() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [result, setResult] = useState<InterviewResult | null>(null);
 
-  // 履歷相關狀態:resumeText 是從檔案抽出來的純文字(暫存在瀏覽器記憶體,不會上傳儲存),
-  // useResume 則是使用者是否勾選「依履歷出題」,兩者都會隨面試請求一起送到後端。
-  const [resumeFileName, setResumeFileName] = useState<string | null>(null);
+  // 履歷相關狀態:resumeText 是使用者貼上的履歷內容,useResume 則是是否勾選「依履歷出題」,
+  // 兩者都會隨面試請求一起送到後端。
   const [resumeText, setResumeText] = useState("");
   const [useResume, setUseResume] = useState(false);
-  const [resumeUploading, setResumeUploading] = useState(false);
 
   // BYOK:金鑰存在瀏覽器 localStorage,是一個「外部狀態」,用 useSyncExternalStore 訂閱它的變化
   // (使用者在設定視窗儲存新金鑰時會觸發),比在 useEffect 裡手動 setState 更符合 React 的建議做法。
@@ -135,58 +129,10 @@ export default function InterviewPage() {
       return;
     }
     if (useResume && !resumeText.trim()) {
-      setErrorMsg("請先上傳履歷,或取消勾選「依履歷出題」");
+      setErrorMsg("請先貼上履歷內容,或取消勾選「依履歷出題」");
       return;
     }
     requestNextStep([]);
-  }
-
-  async function handleResumeFileChange(e: ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    e.target.value = ""; // 允許使用者重新選擇同一個檔案
-    if (!file) return;
-
-    const extension = file.name.split(".").pop()?.toLowerCase();
-    if (extension !== "pdf" && extension !== "txt") {
-      setErrorMsg("目前只支援 PDF 或 TXT 格式的履歷檔案");
-      return;
-    }
-    if (file.size > MAX_RESUME_FILE_SIZE) {
-      setErrorMsg("檔案大小不能超過 5MB");
-      return;
-    }
-
-    setErrorMsg(null);
-    setResumeUploading(true);
-    try {
-      const formData = new FormData();
-      formData.append("file", file);
-      const res = await fetch("/api/parse-resume", { method: "POST", body: formData });
-      let data: { text?: string; error?: string } = {};
-      try {
-        data = await res.json();
-      } catch {
-        // 伺服器沒有回傳有效的 JSON(例如處理逾時或伺服器端例外中斷連線),
-        // 顯示一個好理解的錯誤訊息,而不是把瀏覽器原生的解析錯誤丟給使用者看。
-        throw new Error("履歷解析失敗,請稍後再試一次");
-      }
-      if (!res.ok || !data.text) {
-        throw new Error(data.error || "履歷解析失敗");
-      }
-      setResumeText(data.text);
-      setResumeFileName(file.name);
-      setUseResume(true);
-    } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : "履歷解析失敗");
-    } finally {
-      setResumeUploading(false);
-    }
-  }
-
-  function handleRemoveResume() {
-    setResumeFileName(null);
-    setResumeText("");
-    setUseResume(false);
   }
 
   function handleSubmitAnswer() {
@@ -217,7 +163,6 @@ export default function InterviewPage() {
     setAnswerInput("");
     setErrorMsg(null);
     setResult(null);
-    setResumeFileName(null);
     setResumeText("");
     setUseResume(false);
   }
@@ -282,53 +227,25 @@ export default function InterviewPage() {
             </label>
 
             <div className="flex flex-col gap-2">
-              <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200">
-                履歷(選填)
-              </span>
-              <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                上傳履歷後,AI 面試官可以結合你的實際經歷與職缺描述一起出題,支援 PDF / TXT,大小上限 5MB。
-              </p>
+              <label className="flex flex-col gap-2">
+                <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200">
+                  履歷內容(選填)
+                </span>
+                <p className="text-xs font-normal text-zinc-500 dark:text-zinc-400">
+                  貼上履歷文字後,AI 面試官可以結合你的實際經歷與職缺描述一起出題。
+                </p>
+                <textarea
+                  className="min-h-32 w-full resize-y rounded-lg border border-zinc-300 bg-white p-3 text-sm text-black outline-none focus:border-indigo-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-50"
+                  placeholder="貼上你的履歷內容,例如工作經歷、專案、技能..."
+                  value={resumeText}
+                  maxLength={MAX_RESUME_LENGTH}
+                  onChange={(e) => setResumeText(e.target.value)}
+                  disabled={loading}
+                />
+              </label>
 
-              {!resumeFileName ? (
-                <label
-                  className={`inline-flex w-fit items-center gap-2 rounded-full border border-dashed border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-600 transition-colors hover:border-indigo-400 hover:text-indigo-600 dark:border-zinc-700 dark:text-zinc-400 dark:hover:border-indigo-500 dark:hover:text-indigo-400 ${
-                    resumeUploading || loading ? "pointer-events-none opacity-50" : "cursor-pointer"
-                  }`}
-                >
-                  {resumeUploading ? (
-                    <SpinnerIcon className="h-4 w-4" />
-                  ) : (
-                    <UploadIcon className="h-4 w-4" />
-                  )}
-                  {resumeUploading ? "解析中..." : "上傳履歷檔案"}
-                  <input
-                    type="file"
-                    accept={RESUME_ACCEPT}
-                    className="hidden"
-                    onChange={handleResumeFileChange}
-                    disabled={resumeUploading || loading}
-                  />
-                </label>
-              ) : (
-                <div className="flex items-center gap-2 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm dark:border-zinc-800 dark:bg-zinc-900/60">
-                  <FileTextIcon className="h-4 w-4 shrink-0 text-zinc-500 dark:text-zinc-400" />
-                  <span className="flex-1 truncate text-zinc-700 dark:text-zinc-300">
-                    {resumeFileName}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={handleRemoveResume}
-                    disabled={loading}
-                    className="shrink-0 rounded-full p-1 text-zinc-400 transition-colors hover:bg-zinc-200 hover:text-zinc-700 disabled:opacity-50 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
-                    aria-label="移除履歷"
-                  >
-                    <CloseIcon className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-              )}
-
-              {resumeText && (
-                <label className="mt-1 inline-flex w-fit cursor-pointer items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300">
+              {resumeText.trim() && (
+                <label className="inline-flex w-fit cursor-pointer items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300">
                   <input
                     type="checkbox"
                     checked={useResume}
