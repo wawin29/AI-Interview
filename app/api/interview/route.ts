@@ -11,6 +11,8 @@ const MIN_QUESTIONS = 1;
 const MAX_QUESTIONS = 10;
 // 如果前端沒有傳 totalQuestions 欄位,預設使用 3 題(相容舊版前端行為)。
 const DEFAULT_QUESTIONS = 3;
+// 履歷文字的長度上限,搭配 /api/parse-resume 抽出的文字一起使用,避免 prompt 過長。
+const MAX_RESUME_LENGTH = 8000;
 // OpenAI Chat Completions API 的端點網址。
 const OPENAI_URL = "https://api.openai.com/v1/chat/completions";
 
@@ -94,15 +96,26 @@ async function callOpenAI(
  * 這段內容在「出題」和「最終評分」兩種情境下都會共用,確保 AI 全程知道自己在扮演面試官、
  * 職缺內容是什麼、總共要問幾題。
  */
-function buildSystemPrompt(jobDescription: string, totalQuestions: number): string {
+function buildSystemPrompt(
+  jobDescription: string,
+  totalQuestions: number,
+  resumeText: string
+): string {
+  const resumeSection = resumeText
+    ? `\n求職者履歷內容:\n${resumeText}\n`
+    : "";
+  const resumeRule = resumeText
+    ? "\n- 求職者提供了履歷,請優先結合履歷中實際提到的專案、經歷與技能來設計問題(例如針對某個專案的細節、技術選擇或成果追問),並同時兼顧職缺描述的需求,讓提問更貼近這位求職者的真實背景。"
+    : "";
+
   return `你是一位資深的招聘面試官,正在針對以下職缺對求職者進行模擬面試。
 
 職缺描述:
 ${jobDescription}
-
+${resumeSection}
 面試規則:
 - 總共會問求職者 ${totalQuestions} 個問題。
-- 問題需根據職缺描述的技能與職責設計,具備鑑別度,可依求職者先前的回答追問或延伸,也可以換一個相關主題。
+- 問題需根據職缺描述的技能與職責設計,具備鑑別度,可依求職者先前的回答追問或延伸,也可以換一個相關主題。${resumeRule}
 - 所有輸出都必須使用繁體中文。
 - 你的回覆只能是指定格式的 JSON 物件,不能包含 JSON 以外的任何文字、註解或 Markdown 標記。`;
 }
@@ -141,7 +154,13 @@ function isValidHistory(history: unknown): history is HistoryItem[] {
  */
 export async function POST(request: Request) {
   // Step 1: 解析並驗證 request body 是否為合法 JSON。
-  let body: { jobDescription?: unknown; history?: unknown; totalQuestions?: unknown };
+  let body: {
+    jobDescription?: unknown;
+    history?: unknown;
+    totalQuestions?: unknown;
+    resumeText?: unknown;
+    useResume?: unknown;
+  };
   try {
     body = await request.json();
   } catch {
@@ -198,11 +217,30 @@ export async function POST(request: Request) {
     return Response.json({ error: "對話紀錄超出預期的題數" }, { status: 400 });
   }
 
+  // Step 4.5: 驗證履歷相關欄位(選填)。
+  // useResume 代表使用者是否勾選「依履歷出題」;若勾選了就必須要有履歷文字內容。
+  const useResume = body.useResume === true;
+  const rawResumeText = typeof body.resumeText === "string" ? body.resumeText.trim() : "";
+  if (useResume && !rawResumeText) {
+    return Response.json(
+      { error: "請先上傳履歷,或取消勾選「依履歷出題」" },
+      { status: 400 }
+    );
+  }
+  if (rawResumeText.length > MAX_RESUME_LENGTH) {
+    return Response.json(
+      { error: `履歷內容過長,請縮短至 ${MAX_RESUME_LENGTH} 字以內` },
+      { status: 400 }
+    );
+  }
+  // 只有在使用者勾選「依履歷出題」時,才把履歷內容放進 prompt。
+  const resumeText = useResume ? rawResumeText : "";
+
   // Step 5: 準備要送給 OpenAI 的對話內容。
   // systemPrompt 放在最前面設定角色與規則;
   // conversation 則是把 history 攤平成「assistant 問、user 答」交錯的訊息陣列,
   // 這樣 AI 在「出下一題」或「最終評分」時,都能看到完整的對話上下文(才能追問、才能評分)。
-  const systemPrompt = buildSystemPrompt(jobDescription, totalQuestions);
+  const systemPrompt = buildSystemPrompt(jobDescription, totalQuestions, resumeText);
   const conversation: ChatMessage[] = history.flatMap((item) => [
     { role: "assistant", content: item.question },
     { role: "user", content: item.answer },
