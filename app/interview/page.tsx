@@ -162,9 +162,16 @@ export default function InterviewPage() {
       const formData = new FormData();
       formData.append("file", file);
       const res = await fetch("/api/parse-resume", { method: "POST", body: formData });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data?.error || "履歷解析失敗");
+      let data: { text?: string; error?: string } = {};
+      try {
+        data = await res.json();
+      } catch {
+        // 伺服器沒有回傳有效的 JSON(例如處理逾時或伺服器端例外中斷連線),
+        // 顯示一個好理解的錯誤訊息,而不是把瀏覽器原生的解析錯誤丟給使用者看。
+        throw new Error("履歷解析失敗,請稍後再試一次");
+      }
+      if (!res.ok || !data.text) {
+        throw new Error(data.error || "履歷解析失敗");
       }
       setResumeText(data.text);
       setResumeFileName(file.name);
